@@ -1,7 +1,21 @@
 #include <WiFi.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <TCA9548A.h>
+#include <INA226.h>
 #include <ESPAsyncWebServer.h>
 #include <HTTPClient.h>
 #include "esp_task_wdt.h"
+
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET    -1
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+#define TCAADDR 0x70 // Dirección del TCA9548A (puede variar según la configuración de los pines A0-A2)
+TCA9548A I2CMux;
+INA226 INA(0x40);
 
 const char* ssid_ap = "bateria_config";
 const char* password_ap = "p1234566";
@@ -110,13 +124,37 @@ const char* config_page = R"rawliteral(
 </body>
 </html>)rawliteral";
 
+// Definición del método para leer voltaje, consumo y temperatura
+float voltage() {
+  // Leer el voltaje del bus
+  float v = INA.getBusVoltage();
+
+  // Variables aleatorias de consumo y temperatura
+  float consumption = random(50, 500) / 100.0;
+  float temperature = random(200, 400) / 10.0;
+
+  // Mostrar los datos en la pantalla OLED
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 0);
+  display.println("Voltaje: " + String(v) + " V");
+  display.println("Consumo: " + String(consumption) + " A");
+  display.println("Temperatura: " + String(temperature) + " C");
+  display.display();
+  
+  // Esperar un segundo antes de la próxima lectura
+  delay(500);
+  return v;
+}
+
 void connectToWiFi() {
   WiFi.begin(wifi_ssid.c_str(), wifi_password.c_str());
   int retry_count = 0;
   while (WiFi.status() != WL_CONNECTED) {
     delay(1000);
     Serial.println("Conectando a la red WiFi...");
-    if (++retry_count > 20) { // Intentar conectarse por 20 segundos
+    if (++retry_count > 40) { // Intentar conectarse por 20 segundos
       Serial.println("Error al conectar a la red WiFi. Reiniciando...");
       ESP.restart();
     }
@@ -127,11 +165,11 @@ void connectToWiFi() {
 void sendDataToBackend() {
   // Enviar datos aleatorios al backend
   float consumption = random(50, 500) / 100.0;
-  float voltage = random(112, 168) / 10.0;
+  float v = voltage();
   float temperature = random(200, 400) / 10.0;
 
   // Formatear los datos en formato JSON
-  String json_data = "{\"consumption\": " + String(consumption) + ", \"voltage\": " + String(voltage) + ", \"temperature\": " + String(temperature) + "}";
+  String json_data = "{\"consumption\": " + String(consumption) + ", \"voltage\": " + String(v) + ", \"temperature\": " + String(temperature) + "}";
 
   // Realizar la solicitud HTTP POST al backend
   HTTPClient http;
@@ -160,13 +198,42 @@ void sendDataToBackend() {
 
 void setup() {
   Serial.begin(115200);
+  
+  // Inicializar la comunicación I2C
+  Wire.begin();
 
+  // Inicializar el multiplexor TCA9548A para el canal 0 (pantalla OLED)
+  I2CMux.begin(Wire);
+  I2CMux.openChannel(0);
+
+  // Inicializar la pantalla OLED
+  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println(F("SSD1306 allocation failed"));
+    for(;;);
+  }
+  
+  // Esperar un momento para que se inicialice la pantalla
+  delay(2000);
+
+  // Borrar la pantalla
+  display.clearDisplay();
+  display.display();
+  // INA226 en el pin1 y pantalla en el 0
+  // Inicializar el INA226 en el canal 1 del multiplexor
+  I2CMux.openChannel(1);
+  if (!INA.begin()) {
+    Serial.println("could not connect. Fix and Reboot");
+  }
+  
+  INA.setMaxCurrentShunt(1, 0.002);
+  INA.setBusVoltageConversionTime(7); // Ajuste opcional de tiempo de conversión de voltaje del bus
+  
   // Iniciar el punto de acceso
   if (!WiFi.softAP(ssid_ap, password_ap)) {
     Serial.println("Error al iniciar el punto de acceso");
     return;
   }
-
+  
   Serial.println("Punto de acceso iniciado");
   Serial.print("IP address: ");
   Serial.println(WiFi.softAPIP());
