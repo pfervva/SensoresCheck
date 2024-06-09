@@ -5,6 +5,7 @@
 #include <TCA9548A.h>
 #include <INA226.h>
 #include <ESPAsyncWebServer.h>
+#include <DallasTemperature.h>
 #include <HTTPClient.h>
 #include "esp_task_wdt.h"
 
@@ -12,7 +13,9 @@
 #define SCREEN_HEIGHT 64
 #define OLED_RESET    -1
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
-
+const int oneWireBus = 4;  // Sensor de temperatura
+OneWire oneWire(oneWireBus);
+DallasTemperature sensors(&oneWire);
 #define TCAADDR 0x70 // Dirección del TCA9548A (puede variar según la configuración de los pines A0-A2)
 TCA9548A I2CMux;
 INA226 INA(0x40);
@@ -131,7 +134,7 @@ float voltage() {
 
   // Variables aleatorias de consumo y temperatura
   float consumption = random(50, 500) / 100.0;
-  float temperature = random(200, 400) / 10.0;
+  float temperature = readTemperature();
 
   // Mostrar los datos en la pantalla OLED
   display.clearDisplay();
@@ -166,10 +169,10 @@ void sendDataToBackend() {
   // Enviar datos aleatorios al backend
   float consumption = random(50, 500) / 100.0;
   float v = voltage();
-  float temperature = random(200, 400) / 10.0;
+  float temp = readTemperature();
 
   // Formatear los datos en formato JSON
-  String json_data = "{\"consumption\": " + String(consumption) + ", \"voltage\": " + String(v) + ", \"temperature\": " + String(temperature) + "}";
+  String json_data = "{\"consumption\": " + String(consumption) + ", \"voltage\": " + String(v) + ", \"temperature\": " + String(temp) + "}";
 
   // Realizar la solicitud HTTP POST al backend
   HTTPClient http;
@@ -284,4 +287,11 @@ void loop() {
   // Alimentar al watchdog en el bucle principal
   esp_task_wdt_reset();
   delay(2000); // Esperar 2 segundos antes de enviar la próxima solicitud
+}
+
+float readTemperature() {
+  // Solicitar al sensor DS18B20 leer la temperatura
+  sensors.requestTemperatures();
+  // Leer y devolver la temperatura en grados Celsius
+  return sensors.getTempCByIndex(0); 
 }
